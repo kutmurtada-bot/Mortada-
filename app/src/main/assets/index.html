@@ -672,13 +672,14 @@ $('#sYear').onchange=()=>{ui.sy=+$('#sYear').value;renderStats()};$('#sMonth').o
 $('#expIcon').innerHTML=ic('file');
 function statData(){const m=getMonth(ui.sy,ui.sm);const fams=sortFams(db.families);const g={all:fams,full:[],part:[],none:[]};let kg=0,amt=0;
   fams.forEach(f=>{const r=m.recs[f.id];const s=statusOf(f,r);g[s].push(f);const k=recvKg(f,r);kg+=k;amt+=recvAmt(f,k)});
-  const sp=split(kg);return{g,kg,amt,bags:sp.bags,rem:sp.rem}}
+  const totalMembers=fams.reduce((sum,f)=>sum+(Number(f.members)||0),0);const sp=split(kg);return{g,kg,amt,bags:sp.bags,rem:sp.rem,totalMembers}}
 const LISTS=[['all','قائمة أسماء الأسر بالكامل'],['full','قائمة أسماء الأسر المستلمة بالكامل'],['part','قائمة أسماء الأسر المستلمة بشكل جزئي'],['none','قائمة أسماء الأسر غير المستلمة إطلاقاً']];
 function renderStats(){const d=statData();
   $('#statsGrid').innerHTML=`<div class="stat g"><small>إجمالي الأسر بالكامل</small><b>${nf(d.g.all.length)}</b></div>
   <div class="stat y"><small>إجمالي المبلغ المستحصل</small><b>${nf(d.amt)}</b><span class="s">دينار عراقي</span></div>
   <div class="stat"><small>الأكياس الموزعة</small><b>${nf(d.bags)} كيس</b><span class="s">${d.rem?`+ ${d.rem} كغم`:'بدون كيلوات إضافية'} (${nf(d.kg)} كغم)</span></div>
-  <div class="stat"><small>المستلمون بالكامل</small><b>${nf(d.g.full.length)}</b><span class="s">جزئي ${d.g.part.length} • غير مستلم ${d.g.none.length}</span></div>`;
+  <div class="stat"><small>المستلمون بالكامل</small><b>${nf(d.g.full.length)}</b><span class="s">جزئي ${d.g.part.length} • غير مستلم ${d.g.none.length}</span></div>
+  <div class="stat"><small>عدد الأفراد الكلي</small><b>${nf(d.totalMembers)}</b><span class="s">مجموع أفراد جميع الأسر المسجلة</span></div>`;
   const wrap=$('#statLists');wrap.innerHTML=LISTS.map(([k,t])=>`<details class="acc" data-list="${k}" ${ui.listOpen[k]?'open':''}><summary>${t}<span class="pill">${d.g[k].length}</span><span class="chev">${ic('chev',20)}</span></summary><div class="body"><div class="search"><svg class="i" viewBox="0 0 24 24">${IC.search}</svg><input type="search" placeholder="بحث سريع داخل القائمة" data-lsearch="${k}"></div><ol class="names" id="ol-${k}"></ol></div></details>`).join('');
   const fill=k=>{const q=norm(($(`[data-lsearch=${k}]`)||{}).value);const arr=d.g[k].filter(f=>!q||norm(f.name).includes(q));$('#ol-'+k).innerHTML=arr.length?arr.map(f=>`<li>${esc(f.name)}</li>`).join(''):'<li style="justify-content:center;color:var(--muted)">لا توجد أسماء</li>';$('#ol-'+k).style.counterReset='n'};
   LISTS.forEach(([k])=>{fill(k);$(`[data-lsearch=${k}]`).oninput=()=>fill(k)});
