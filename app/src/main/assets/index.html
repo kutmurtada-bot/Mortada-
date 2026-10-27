@@ -421,7 +421,7 @@ $('#addForm').addEventListener('submit',e=>{
 /* ========= 2) العوائل ========= */
 $('#famBackup').innerHTML=ic('down')+' نسخ احتياطي';
 $('#famRestore').innerHTML=ic('up')+' استعادة البيانات';
-$('#famSearch').addEventListener('input',renderFamilies);
+let famSearchT;$('#famSearch').addEventListener('input',()=>{clearTimeout(famSearchT);famSearchT=setTimeout(renderFamilies,100)});
 function famCard(f){
   const linked=f.linkedIds.map(byId).filter(Boolean);
   return `<article class="card fam" data-id="${f.id}">
@@ -501,12 +501,42 @@ async function downloadBlob(blob,name,openAfter=false){
   setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},1500)
 }
 const stamp=()=>new Date().toISOString().slice(0,10);
-$('#famBackup').onclick=()=>{downloadBlob(new Blob([JSON.stringify({type:'families',families:db.families},null,1)],{type:'application/json'}),`families-backup-${stamp()}.json`,true);toast('تم تصدير نسخة العوائل')};
+$('#famBackup').onclick=async()=>{
+  try{
+    const backup={type:'flour-distribution-full-backup',version:2,createdAt:new Date().toISOString(),data:db};
+    await downloadBlob(new Blob([JSON.stringify(backup,null,2)],{type:'application/json'}),`flour-full-backup-${stamp()}.json`,true);
+    toast('تم تجهيز نسخة احتياطية كاملة تشمل العوائل وسجلات التوزيع والإعدادات');
+  }catch(err){toast('تعذر إنشاء النسخة الاحتياطية') }
+};
 $('#famRestore').onclick=()=>$('#famRestoreFile').click();
-$('#famRestoreFile').onchange=async e=>{const file=e.target.files[0];e.target.value='';if(!file)return;
-  try{const d=JSON.parse(await file.text());const fam=d.families;if(!Array.isArray(fam))throw 0;
-    if(!await confirmSheet(`سيتم استبدال بيانات العوائل الحالية بـ ${fam.length} عائلة من الملف. المتابعة؟`,'استعادة'))return;
-    db.families=fam.map(f=>({linkedIds:[],notes:'',...f}));save();renderFamilies();toast('تمت استعادة بيانات العوائل');autoSync()}catch(err){toast('الملف غير صالح')}};
+$('#famRestoreFile').onchange=async e=>{
+  const file=e.target.files[0];e.target.value='';if(!file)return;
+  try{
+    const parsed=JSON.parse(await file.text());
+    const full=parsed&&parsed.type==='flour-distribution-full-backup'&&parsed.data&&typeof parsed.data==='object';
+    const fam=full?parsed.data.families:parsed.families;
+    if(!Array.isArray(fam)||fam.some(f=>!f||typeof f!=='object'||typeof f.id!=='string'||typeof f.name!=='string'))throw new Error('invalid families');
+    if(full&&( !parsed.data.dist || typeof parsed.data.dist!=='object' || Array.isArray(parsed.data.dist)))throw new Error('invalid distribution data');
+    const msg=full
+      ? `سيتم استبدال جميع بيانات هذا الجهاز بنسخة احتياطية تحتوي على ${fam.length} عائلة وسجلات التوزيع والإعدادات. تأكد أنك اخترت الملف الصحيح. المتابعة؟`
+      : `هذا ملف عوائل قديم يحتوي على ${fam.length} عائلة فقط. سيُستبدل سجل العوائل، أما سجلات التوزيع الحالية فستبقى كما هي. المتابعة؟`;
+    if(!await confirmSheet(msg,'استعادة'))return;
+    const oldDb=db;
+    try{
+      if(full){
+        const incoming=parsed.data;
+        db={...defaults(),...incoming,settings:{...defaults().settings,...(incoming.settings||{})}};
+        if(!Array.isArray(db.queue))db.queue=[];
+      }else{
+        db.families=fam.map(f=>({linkedIds:[],notes:'',...f}));
+      }
+      save();
+    }catch(err){db=oldDb;throw err}
+    renderFamilies();if(cur===2)renderDist();if(cur===3)renderStats();
+    toast(full?'تمت استعادة النسخة الكاملة بنجاح':'تمت استعادة بيانات العوائل');
+    autoSync();
+  }catch(err){toast('تعذرت الاستعادة: الملف غير صالح أو لا يحتوي على بيانات مكتملة')}
+};
 
 /* ========= 3) التوزيع ========= */
 function fillYM(ys,ms,y,m){ys.innerHTML=Array.from({length:15},(_,i)=>2026+i).map(v=>`<option value="${v}">${v}</option>`).join('');ms.innerHTML=MONTHS.map((n,i)=>`<option value="${i+1}">${n}</option>`).join('');ys.value=y;ms.value=m}
