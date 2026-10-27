@@ -459,7 +459,16 @@ function openVars(id){const f=byId(id);
   openSheet(`<h3>المتغيرات — ${esc(f.name)}</h3><div class="row"><button class="btn primary" id="vAdd">${ic('plus')} إضافة فرد</button><button class="btn danger" id="vDel">${ic('minus')} حذف فرد</button></div><div id="vBody"></div>`);
   const pick=sign=>{ $('#vBody').innerHTML=`<p class="muted" style="margin:16px 0 10px">${sign>0?'اختر عدد الأفراد المراد إضافتهم':'اختر عدد الأفراد المراد حذفهم'} (الحالي: ${f.members})</p><div class="numgrid">${Array.from({length:20},(_,i)=>`<button data-n="${i+1}">${i+1}</button>`).join('')}</div>`;
     $$('#vBody .numgrid button').forEach(b=>b.onclick=()=>{const n=+b.dataset.n;if(sign<0&&f.members-n<1){toast('لا يمكن أن يقل عدد الأفراد عن 1');return}
-      f.members+=sign*n;f.flour+=sign*n*KG_PER_PERSON;f.amount+=sign*n*PRICE_PER_PERSON;f.varMark={type:sign>0?'add':'del',n,ts:Date.now()};save();closeSheet();renderFamilies();toast(`أصبح عدد الأفراد ${f.members} — الحصة ${f.flour} كغم — المبلغ ${nf(f.amount)} د.ع`);autoSync()})};
+      const currentMembers=Number(f.members)||0;
+      const newMembers=currentMembers+sign*n;
+      if(newMembers<1){toast('لا يمكن أن يقل عدد الأفراد عن 1');return}
+      f.members=newMembers;
+      f.flour=newMembers*KG_PER_PERSON;
+      f.amount=newMembers*PRICE_PER_PERSON;
+      f.varMark={type:sign>0?'add':'del',n,ts:Date.now()};
+      save();closeSheet();renderFamilies();
+      toast(`أصبح عدد الأفراد ${f.members} — الحصة ${nf(f.flour)} كغم — المبلغ ${nf(f.amount)} د.ع`);
+      autoSync()})};
   $('#vAdd').onclick=()=>pick(1);$('#vDel').onclick=()=>pick(-1)}
 function openLink(id){const f=byId(id);
   const cands=sortFams(db.families.filter(x=>x.id!==id&&!x.linkedIds.length));
