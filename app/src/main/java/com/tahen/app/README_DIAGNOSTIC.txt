@@ -1,0 +1,1 @@
+Diagnostic startup reporting is enabled by CrashReporterApplication when the manifest points to it. Keep SENTRY_DSN in GitHub Actions secrets only.
