@@ -7,6 +7,8 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.MediaStore;
+import android.util.Log;
+import android.webkit.ConsoleMessage;
 import android.webkit.JavascriptInterface;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
@@ -22,7 +24,11 @@ import java.io.FileOutputStream;
 import java.io.OutputStream;
 import java.util.Base64;
 
+import io.sentry.Sentry;
+import io.sentry.SentryLevel;
+
 public class MainActivity extends Activity {
+    private static final String TAG = "FlourDistribution";
     private static final int CREATE_FILE = 7001;
     private static final int PICK_BACKUP_FILE = 7002;
     private ValueCallback<Uri[]> filePathCallback;
@@ -35,6 +41,8 @@ public class MainActivity extends Activity {
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
+        initSentry();
+
         webView = new WebView(this);
         setContentView(webView);
 
@@ -46,6 +54,17 @@ public class MainActivity extends Activity {
         s.setBuiltInZoomControls(false);
         webView.setWebViewClient(new WebViewClient());
         webView.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public boolean onConsoleMessage(ConsoleMessage message) {
+                if (message == null) return true;
+                if (message.messageLevel() == ConsoleMessage.MessageLevel.ERROR) {
+                    String text = message.message() + " @ " + message.sourceId() + ":" + message.lineNumber();
+                    Sentry.captureMessage("WebView JavaScript error: " + text, SentryLevel.ERROR);
+                    Log.e(TAG, text);
+                }
+                return true;
+            }
+
             @Override
             public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> callback,
                                              FileChooserParams params) {
@@ -63,6 +82,7 @@ public class MainActivity extends Activity {
                             PICK_BACKUP_FILE);
                     return true;
                 } catch (Exception e) {
+                    Sentry.captureException(e);
                     filePathCallback = null;
                     Toast.makeText(MainActivity.this, "تعذر فتح مدير الملفات", Toast.LENGTH_LONG).show();
                     return false;
@@ -71,6 +91,26 @@ public class MainActivity extends Activity {
         });
         webView.addJavascriptInterface(new AndroidBridge(), "AndroidBridge");
         webView.loadUrl("file:///android_asset/index.html");
+    }
+
+    private void initSentry() {
+        final String dsn = BuildConfig.SENTRY_DSN == null ? "" : BuildConfig.SENTRY_DSN.trim();
+        if (dsn.isEmpty()) {
+            Log.w(TAG, "Sentry is not configured. Add the SENTRY_DSN environment variable for production builds.");
+            return;
+        }
+        try {
+            Sentry.init(options -> {
+                options.setDsn(dsn);
+                options.setEnvironment("prod");
+                options.setRelease(getPackageName() + "@" + BuildConfig.VERSION_NAME + "+" + BuildConfig.VERSION_CODE);
+                options.setSendDefaultPii(false);
+                options.setAttachScreenshot(false);
+                options.setEnableAutoSessionTracking(true);
+            });
+        } catch (Exception e) {
+            Log.e(TAG, "Sentry initialization failed", e);
+        }
     }
 
     @Override
@@ -96,10 +136,16 @@ public class MainActivity extends Activity {
     public class AndroidBridge {
         @JavascriptInterface
         public void saveFile(String name, String mime, String base64, boolean openAfter) {
-            pendingBytes = decode(base64);
-            pendingName = name;
-            pendingMime = (mime == null || mime.isEmpty()) ? "application/octet-stream" : mime;
-            pendingOpen = openAfter;
+            try {
+                pendingBytes = decode(base64);
+                pendingName = name;
+                pendingMime = (mime == null || mime.isEmpty()) ? "application/octet-stream" : mime;
+                pendingOpen = openAfter;
+            } catch (Exception e) {
+                Sentry.captureException(e);
+                Toast.makeText(MainActivity.this, "تعذر تجهيز الملف للحفظ", Toast.LENGTH_LONG).show();
+                return;
+            }
             runOnUiThread(() -> {
                 if (Build.VERSION.SDK_INT >= 29) {
                     try {
@@ -110,6 +156,7 @@ public class MainActivity extends Activity {
                         Uri uri = getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, v);
                         if (uri == null) throw new Exception("insert failed");
                         try (OutputStream out = getContentResolver().openOutputStream(uri)) {
+                            if (out == null) throw new Exception("output stream unavailable");
                             out.write(pendingBytes);
                         }
                         v.clear();
@@ -118,16 +165,19 @@ public class MainActivity extends Activity {
                         if (pendingOpen) openUri(uri, pendingMime);
                         else Toast.makeText(MainActivity.this, "تم حفظ الملف في التنزيلات", Toast.LENGTH_SHORT).show();
                     } catch (Exception e) {
+                        Sentry.captureException(e);
                         Toast.makeText(MainActivity.this, "تعذر حفظ الملف: " + e.getMessage(), Toast.LENGTH_LONG).show();
                     }
                 } else {
                     try {
                         File dir = getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS);
+                        if (dir == null) throw new Exception("downloads directory unavailable");
                         File f = new File(dir, pendingName);
                         try (FileOutputStream out = new FileOutputStream(f)) { out.write(pendingBytes); }
                         if (pendingOpen) openUri(Uri.fromFile(f), pendingMime);
                         else Toast.makeText(MainActivity.this, "تم حفظ الملف", Toast.LENGTH_SHORT).show();
                     } catch (Exception e) {
+                        Sentry.captureException(e);
                         Toast.makeText(MainActivity.this, "تعذر حفظ الملف", Toast.LENGTH_LONG).show();
                     }
                 }
@@ -136,23 +186,29 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public void shareFile(String name, String mime, String base64) {
-            byte[] data = decode(base64);
-            runOnUiThread(() -> {
-                try {
-                    File dir = new File(getCacheDir(), "shared");
-                    if (!dir.exists()) dir.mkdirs();
-                    File f = new File(dir, name);
-                    try (FileOutputStream out = new FileOutputStream(f)) { out.write(data); }
-                    Uri uri = FileProvider.getUriForFile(MainActivity.this, getPackageName() + ".fileprovider", f);
-                    Intent i = new Intent(Intent.ACTION_SEND);
-                    i.setType(mime == null ? "application/octet-stream" : mime);
-                    i.putExtra(Intent.EXTRA_STREAM, uri);
-                    i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                    startActivity(Intent.createChooser(i, "مشاركة الملف"));
-                } catch (Exception e) {
-                    Toast.makeText(MainActivity.this, "تعذرت مشاركة الملف", Toast.LENGTH_LONG).show();
-                }
-            });
+            try {
+                byte[] data = decode(base64);
+                runOnUiThread(() -> {
+                    try {
+                        File dir = new File(getCacheDir(), "shared");
+                        if (!dir.exists() && !dir.mkdirs()) throw new Exception("cache directory unavailable");
+                        File f = new File(dir, name);
+                        try (FileOutputStream out = new FileOutputStream(f)) { out.write(data); }
+                        Uri uri = FileProvider.getUriForFile(MainActivity.this, getPackageName() + ".fileprovider", f);
+                        Intent i = new Intent(Intent.ACTION_SEND);
+                        i.setType(mime == null ? "application/octet-stream" : mime);
+                        i.putExtra(Intent.EXTRA_STREAM, uri);
+                        i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                        startActivity(Intent.createChooser(i, "مشاركة الملف"));
+                    } catch (Exception e) {
+                        Sentry.captureException(e);
+                        Toast.makeText(MainActivity.this, "تعذرت مشاركة الملف", Toast.LENGTH_LONG).show();
+                    }
+                });
+            } catch (Exception e) {
+                Sentry.captureException(e);
+                Toast.makeText(MainActivity.this, "تعذر تجهيز الملف للمشاركة", Toast.LENGTH_LONG).show();
+            }
         }
     }
 
@@ -163,6 +219,7 @@ public class MainActivity extends Activity {
             i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
             startActivity(i);
         } catch (Exception e) {
+            Sentry.captureException(e);
             Toast.makeText(this, "تم حفظ الملف. لا يوجد تطبيق مناسب لفتحه مباشرة.", Toast.LENGTH_LONG).show();
         }
     }
