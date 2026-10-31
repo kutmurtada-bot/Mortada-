@@ -41,7 +41,8 @@ public class MainActivity extends Activity {
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
-        initSentry();
+        // Temporarily keep Sentry out of the startup path while isolating the launch crash.
+        // The Sentry integration remains in the project and can be re-enabled after launch is verified.
 
         webView = new WebView(this);
         setContentView(webView);
