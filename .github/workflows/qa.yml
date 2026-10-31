@@ -1,0 +1,83 @@
+name: QA Gate
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qa-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx2g
+
+jobs:
+  synthetic-qa:
+    name: Synthetic data & load QA
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run QA suite
+        run: python qa/qa_suite.py
+
+  android-build:
+    name: Android build + lint + unit tests
+    runs-on: ubuntu-latest
+    needs: synthetic-qa
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Run lint
+        env:
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+        run: gradle :app:lintDebug --no-daemon
+      - name: Run unit tests
+        env:
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+        run: gradle :app:testDebugUnitTest --no-daemon
+      - name: Build debug APK
+        env:
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+        run: gradle :app:assembleDebug --no-daemon
+      - name: Verify APK exists
+        run: test -s app/build/outputs/apk/debug/app-debug.apk
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: flour-distribution-qa-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+      - name: Upload lint report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-lint-report
+          path: app/build/reports/lint-results-debug.html
+          if-no-files-found: ignore
+
+  qa-summary:
+    name: QA release gate
+    runs-on: ubuntu-latest
+    needs: [synthetic-qa, android-build]
+    steps:
+      - name: QA passed
+        run: echo "All required QA gates passed. APK build is eligible for testing." 
