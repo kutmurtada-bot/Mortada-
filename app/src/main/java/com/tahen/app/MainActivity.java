@@ -105,7 +105,6 @@ public class MainActivity extends Activity {
                 options.setEnvironment("prod");
                 options.setRelease(getPackageName() + "@" + BuildConfig.VERSION_NAME + "+" + BuildConfig.VERSION_CODE);
                 options.setSendDefaultPii(false);
-                options.setAttachScreenshot(false);
                 options.setEnableAutoSessionTracking(true);
             });
         } catch (Exception e) {
