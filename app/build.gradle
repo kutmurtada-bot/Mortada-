@@ -12,9 +12,21 @@ android {
         targetSdk 35
         versionCode 1
         versionName '1.0'
+        buildConfigField 'String', 'SENTRY_DSN', '"' + (System.getenv('SENTRY_DSN') ?: '') + '"'
+    }
+
+    buildFeatures {
+        buildConfig = true
+    }
+
+    testOptions {
+        unitTests.returnDefaultValues = true
     }
 }
 
 dependencies {
     implementation 'androidx.core:core:1.15.0'
+    implementation 'io.sentry:sentry-android:8.61.0'
+
+    testImplementation 'junit:junit:4.13.2'
 }
