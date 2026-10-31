@@ -37,3 +37,5 @@ jobs:
           name: flour-distribution-apk
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+
+# Trigger a fresh build after Sentry configuration.
